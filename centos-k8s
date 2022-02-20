@@ -1,0 +1,139 @@
+# Install Kubernetes on some Centos 8 systems
+
+---
+- hosts: kube_master, kube_nodes
+
+  tasks:
+
+  - name: Set timezone
+    timezone:
+      name: America/Chicago
+
+  - name: Update
+    dnf:
+      name: '*'
+      state: latest
+
+  - name: Install some typical stuff
+    dnf:
+      name:
+        - tcpdump
+        - nano
+        - wget
+        - nmap
+      state: present
+
+  - name: Disable SELinux
+    selinux:
+      state: disabled
+
+  - name: Reboot
+    reboot:
+
+  - name: Add Docker and Kube repos
+    command: "{{ item }}"
+    with_items:
+      - dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+      - dnf config-manager --add-repo=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+
+  - name: Update again (Is this necessary?)
+    dnf:
+      name: '*'
+      state: latest
+
+  - name: Install containerd.io
+    dnf:
+      name: https://download.docker.com/linux/centos/7/x86_64/stable/Packages/containerd.io-1.4.9-3.1.el7.x86_64.rpm
+      disable_gpg_check: True
+      state: present
+
+  - name: Install Docker
+    dnf:
+      name: docker-ce
+      state: present
+
+  - name: Change Docker network service to use systemd
+    lineinfile:
+      path: /etc/docker/daemon.json
+      create: yes
+      line: "{{ item }}"
+    with_items:
+    - '{'
+    - '  "exec-opts": ["native.cgroupdriver=systemd"]'
+    - '}'
+
+  - name: Enable docker service
+    systemd:
+      name: docker
+      state: restarted
+      enabled: yes
+      daemon_reload: yes
+
+  - name: Install Kubernetes
+    dnf:
+      name: kubeadm
+      state: present
+      update_cache: yes
+      disable_gpg_check: yes
+
+  - name: Enable Kubernetes service
+    systemd:
+      name: kubelet
+      state: restarted
+      enabled: yes
+      daemon_reload: yes
+
+- hosts: kube_master
+
+  tasks:
+
+  - name: Add firewall configs for Kubernetes master
+    firewalld:
+      port: "{{ item }}"
+      permanent: yes
+      state: enabled
+    with_items:
+      - 6443/tcp
+      - 2379-2380/tcp
+      - 10250/tcp
+      - 10251/tcp
+      - 10252/tcp
+      - 10255/tcp
+
+  - name: reload service firewalld
+    systemd:
+      name: firewalld
+      state: reloaded
+
+- hosts: kube_nodes
+
+  tasks:
+
+  - name: Add firewall configs for Kubernetes nodes
+    firewalld:
+      port: "{{ item }}"
+      permanent: yes
+      state: enabled
+    with_items:
+      - 6783/tcp
+      - 10250/tcp
+      - 10255/tcp
+      - 30000-32767/tcp
+
+  - name: reload service firewalld
+    systemd:
+      name: firewalld
+      state: reloaded
+
+## then on the master set up a network and init:
+# export kubever=$(kubectl version | base64 | tr -d '\n')
+# kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$kubever"
+# swapoff -a
+# kubeadminit
+# mkdir -p $HOME/.kube
+# cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+# chown $(id -u):$(id -g) $HOME/.kube/config
+
+## finally on the nodes:
+# swapoff -a
+# kubeadm join <rest of command goes here>
