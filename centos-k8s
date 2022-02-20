@@ -1,9 +1,13 @@
-# Install Kubernetes on some Centos 8 systems
-
 ---
 - hosts: kube_master, kube_nodes
 
   tasks:
+
+  - name: Add pubkey
+    lineinfile:
+      path: /root/.ssh/authorized_keys
+      create: yes
+      line: '<paste pubkey here>'
 
   - name: Set timezone
     timezone:
@@ -14,7 +18,7 @@
       name: '*'
       state: latest
 
-  - name: Install some typical stuff
+  - name: Install some typical stuff we like to use
     dnf:
       name:
         - tcpdump
@@ -27,16 +31,22 @@
     selinux:
       state: disabled
 
+  - name: Comment out fstab entry to disable swap
+    replace:
+      path: /etc/fstab
+      regexp: '(.*swap.*)'
+      replace: '#\1'
+
   - name: Reboot
     reboot:
 
-  - name: Add Docker and Kube repos
+  - name: Add Docker and Kube repos (Ansible's module doesn't work too well for this)
     command: "{{ item }}"
     with_items:
       - dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
       - dnf config-manager --add-repo=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
 
-  - name: Update again (Is this necessary?)
+  - name: Update again (Is this necessary)
     dnf:
       name: '*'
       state: latest
@@ -83,22 +93,68 @@
       enabled: yes
       daemon_reload: yes
 
+  - name: Create firewall service object for http-alt
+    lineinfile:
+      path: /usr/lib/firewalld/services/http-alt.xml
+      create: yes
+      line: "{{ item }}"
+    with_items:
+      - '<?xml version="1.0" encoding="utf-8"?>'
+      - '<service>'
+      - '  <short>http-alt</short>'
+      - '  <description>HTTP alternate ports</description>'
+      - '  <port protocol="tcp" port="8080"/>'
+      - '  <port protocol="udp" port="8080"/>'
+      - '</service>'
+
+  - name: Create firewall service object for Kubernetes Master
+    lineinfile:
+      path: /usr/lib/firewalld/services/kube-master.xml
+      create: yes
+      line: "{{ item }}"
+    with_items:
+      - '<?xml version="1.0" encoding="utf-8"?>'
+      - '<service>'
+      - '  <short>kube-master</short>'
+      - '  <description>Services for Kubernetes Master</description>'
+      - '  <port protocol="tcp" port="6443"/>'
+      - '  <port protocol="tcp" port="2379-2380"/>'
+      - '  <port protocol="tcp" port="10250"/>'
+      - '  <port protocol="tcp" port="10251"/>'
+      - '  <port protocol="tcp" port="10252"/>'
+      - '  <port protocol="tcp" port="10255"/>'
+      - '</service>'
+
+  - name: Create firewall service object for Kubernetes Node
+    lineinfile:
+      path: /usr/lib/firewalld/services/kube-node.xml
+      create: yes
+      line: "{{ item }}"
+    with_items:
+      - '<?xml version="1.0" encoding="utf-8"?>'
+      - '<service>'
+      - '  <short>kube-master</short>'
+      - '  <description>Services for Kubernetes Node</description>'
+      - '  <port protocol="tcp" port="6783"/>'
+      - '  <port protocol="tcp" port="10250"/>'
+      - '  <port protocol="tcp" port="10255"/>'
+      - '  <port protocol="tcp" port="30000-32767"/>'
+      - '</service>'
+
 - hosts: kube_master
 
   tasks:
 
-  - name: Add firewall configs for Kubernetes master
+  - name: Add firewall configs for Master
     firewalld:
-      port: "{{ item }}"
+      service: "{{ item }}"
       permanent: yes
       state: enabled
     with_items:
-      - 6443/tcp
-      - 2379-2380/tcp
-      - 10250/tcp
-      - 10251/tcp
-      - 10252/tcp
-      - 10255/tcp
+      - http
+      - https
+      - http-alt
+      - kube-master
 
   - name: reload service firewalld
     systemd:
@@ -109,31 +165,24 @@
 
   tasks:
 
-  - name: Add firewall configs for Kubernetes nodes
+  - name: Add firewall configs for Nodes
     firewalld:
-      port: "{{ item }}"
+      service: "{{ item }}"
       permanent: yes
       state: enabled
     with_items:
-      - 6783/tcp
-      - 10250/tcp
-      - 10255/tcp
-      - 30000-32767/tcp
+      - http
+      - https
+      - http-alt
+      - kube-node
 
   - name: reload service firewalld
     systemd:
       name: firewalld
       state: reloaded
 
-## then on the master set up a network and init:
-# export kubever=$(kubectl version | base64 | tr -d '\n')
-# kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$kubever"
-# swapoff -a
-# kubeadminit
-# mkdir -p $HOME/.kube
-# cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-# chown $(id -u):$(id -g) $HOME/.kube/config
-
-## finally on the nodes:
-# swapoff -a
-# kubeadm join <rest of command goes here>
+# Next:
+# Configure network stuff
+# Join nodes to master
+# Create app
+# Create ingress
