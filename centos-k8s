@@ -198,7 +198,7 @@
       - cp /etc/kubernetes/admin.conf $HOME/.kube/config
       - chown root:root $HOME/.kube/config
 
- - name: Install Calico CNI Plugin
+  - name: Install Calico CNI Plugin
     command: "{{ item }}"
     with_items:
       - kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
