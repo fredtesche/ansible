@@ -18,7 +18,7 @@
       name: '*'
       state: latest
 
-  - name: Install some typical stuff we like to use
+  - name: Install some typical stuff
     dnf:
       name:
         - tcpdump
@@ -107,7 +107,7 @@
       - '  <port protocol="udp" port="8080"/>'
       - '</service>'
 
-  - name: Create firewall service object for Kubernetes Master
+  - name: Create firewall object for Kubernetes Master
     lineinfile:
       path: /usr/lib/firewalld/services/kube-master.xml
       create: yes
@@ -122,10 +122,10 @@
       - '  <port protocol="tcp" port="10250"/>'
       - '  <port protocol="tcp" port="10251"/>'
       - '  <port protocol="tcp" port="10252"/>'
-      - '  <port protocol="tcp" port="10255"/>'
+      - '  <port protocol="udp" port="8472"/>'
       - '</service>'
 
-  - name: Create firewall service object for Kubernetes Node
+  - name: Create firewall object for Kubernetes Node
     lineinfile:
       path: /usr/lib/firewalld/services/kube-node.xml
       create: yes
@@ -135,9 +135,8 @@
       - '<service>'
       - '  <short>kube-master</short>'
       - '  <description>Services for Kubernetes Node</description>'
-      - '  <port protocol="tcp" port="6783"/>'
       - '  <port protocol="tcp" port="10250"/>'
-      - '  <port protocol="tcp" port="10255"/>'
+      - '  <port protocol="udp" port="8472"/>'
       - '  <port protocol="tcp" port="30000-32767"/>'
       - '</service>'
 
@@ -181,8 +180,42 @@
       name: firewalld
       state: reloaded
 
+- hosts: kube_master
+
+  tasks:
+
+  - name: Init Kubernetes
+    command: "kubeadm init"
+
+  - name: Create dir for Kubernetes
+    file:
+      path: $HOME/.kube
+      state: directory
+
+  - name: Copy default config and set some permissions
+    command: "{{ item }}"
+    with_items:
+      - cp /etc/kubernetes/admin.conf $HOME/.kube/config
+      - chown root:root $HOME/.kube/config
+
+ - name: Install Calico CNI Plugin
+    command: "{{ item }}"
+    with_items:
+      - kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/cloudnativelabs/kube-router/master/daemonset/kubeadm-kuberouter-all-features.yaml
+
+  - name: Get join command for nodes
+    command: kubeadm token create --print-join-command
+    register: join_command
+
+- hosts: kube_nodes
+
+  tasks:
+
+  - name: Join Kube nodes to cluster
+    command: "{{ hostvars[groups['kube_master'][0]]['join_command']['stdout'] }}"
+
 # Next:
 # Configure network stuff
-# Join nodes to master
 # Create app
 # Create ingress
